@@ -1,0 +1,8 @@
+.git
+.env*
+work
+design
+**/node_modules
+**/dist
+**/build
+**/.gradle

@@ -1,0 +1,6 @@
+# The user-approved NAS entry point; database and application ports stay internal.
+services:
+  nginx:
+    ports: !override
+      - 127.0.0.1:${PORT:-30170}:8080
+      - ${ASSETS_LAN_ADDRESS:?Set ASSETS_LAN_ADDRESS to the approved PC address}:${PORT:-30170}:8080

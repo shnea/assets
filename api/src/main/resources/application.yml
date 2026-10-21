@@ -1,0 +1,49 @@
+server:
+  port: 8080
+  forward-headers-strategy: framework
+  servlet:
+    session:
+      timeout: 12h
+      cookie:
+        name: ASSETS_SESSION
+        http-only: true
+        secure: ${COOKIE_SECURE:false}
+        same-site: lax
+spring:
+  application:
+    name: assets
+  datasource:
+    url: ${DATABASE_URL:jdbc:postgresql://db:5432/assets}
+    username: ${DATABASE_USER:assets}
+    password: ${POSTGRES_PASSWORD}
+  security:
+    oauth2:
+      client:
+        registration:
+          platform:
+            client-id: ${PLATFORM_OIDC_CLIENT_ID:app}
+            client-authentication-method: none
+            authorization-grant-type: authorization_code
+            redirect-uri: ${PLATFORM_OIDC_REDIRECT_URI}
+            scope: openid,profile,email
+        provider:
+          platform:
+            issuer-uri: ${PLATFORM_OIDC_ISSUER}
+  servlet:
+    multipart:
+      enabled: false
+  jackson:
+    deserialization:
+      fail-on-unknown-properties: true
+assets:
+  url: ${APP_URL:http://localhost:30170}
+  admin-issuer: ${ADMIN_OIDC_ISSUER:}
+  admin-subject: ${ADMIN_OIDC_SUBJECT:}
+  platform-url: ${PLATFORM_URL:https://platform.shnea.kr}
+  file-origin: ${PLATFORM_PUBLIC_URL:${PLATFORM_URL:https://platform.shnea.kr}}
+  platform-key: ${PLATFORM_API_KEY:}
+  platform-project: ${PLATFORM_PROJECT_ID:}
+  platform-environment: ${PLATFORM_ENVIRONMENT_ID:}
+logging:
+  level:
+    org.springframework.security: WARN

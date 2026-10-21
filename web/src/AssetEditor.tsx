@@ -1,0 +1,38 @@
+import {useContext,useEffect,useRef,useState} from 'react';
+import {api,title,type Asset,type Content} from './api';
+import {CategoryOptions} from './categories';
+import {useAutosave} from './autosave';
+import {Attachments} from './FileDropzone';
+import {RichField} from './RichField';
+import {Heading,Notice} from './main';
+import {attachmentsPending} from './documents';
+type Guard={current:(()=>Promise<boolean>)|null};
+
+export function AssetEditor({initial,guard}:{initial:Asset;guard:Guard}){
+  const categories=useContext(CategoryOptions),savedCategory=useRef(initial.draft.category);
+  const revision=useRef(initial.revision),[saving,setSaving]=useState(false),[message,setMessage]=useState(''),[changeNote,setChangeNote]=useState('');
+  const [uploading,setUploading]=useState(false);
+  const draft=useAutosave(initial.draft,async content=>{const saved=await api<Asset>('/api/assets/'+initial.id,{method:'PUT',body:JSON.stringify({revision:revision.current,content})});revision.current=saved.revision;if(savedCategory.current!==content.category){savedCategory.current=content.category;window.dispatchEvent(new Event('assets:categories-changed'));}});
+  const content=draft.value;
+  const attachmentsBusy=uploading||attachmentsPending(content);
+  useEffect(()=>{guard.current=draft.flush;return()=>{guard.current=null;};},[draft.flush,guard]);
+  const change=<K extends keyof Content>(key:K,value:Content[K])=>draft.change({...draft.latest.current,[key]:value});
+  async function save(){setSaving(true);setMessage('');try{if(!await draft.flush())return;
+    await api(`/api/assets/${initial.id}/versions`,{method:'POST',body:JSON.stringify({revision:revision.current,changeNote})});revision.current++;
+    window.location.hash='/assets/'+initial.id;
+  }catch(e){setMessage((e as Error).message);}finally{setSaving(false);}}
+  const statusText={saved:'초안 저장됨',pending:'변경 내용 대기 중',saving:'초안 저장 중…',error:'초안 저장 실패'}[draft.status];
+  return <div className="editor-page"><Heading title="제작법 정리" description=""/>
+    {message&&<Notice error>{message}</Notice>}{draft.error&&<Notice error>{draft.error}<button onClick={()=>void draft.flush()}>저장 다시 시도</button></Notice>}
+    <div className="editor-layout"><div><fieldset disabled={saving} className="editor-fields"><label className="title-field">자산 이름 <small>선택</small><input value={content.title} placeholder={title(content)==="이름 없는 제작법"?"":title(content)} maxLength={200} onChange={e=>change('title',e.target.value)}/></label>
+      {([['work','어떤 작업이었나요?'],['remember','다음에 기억할 것은?'],['start','다시 시작할 때 무엇부터?']] as const).map(([key,label],i)=><section className="guide-field" key={key}><h2 className="question-heading"><b>{String(i+1).padStart(2,'0')}</b><strong>{label}</strong></h2><RichField label={label} documentKey={`${initial.id}:${key}`} value={content[key]} onChange={value=>change(key,value)} assetId={initial.id} editable={!saving}/></section>)}
+      <details className="extra-fields"><summary>+ 추가 정보</summary><div className="extra-content"><div className="field-grid"><label>분류<input list="categories" value={content.category} onChange={e=>change('category',e.target.value)} maxLength={100}/><datalist id="categories">{categories.map(c=><option key={c} value={c}/>)}</datalist></label><label>태그<input value={content.tags.join(', ')} onChange={e=>change('tags',e.target.value.split(',').map(v=>v.trim()))} placeholder="쉼표로 구분"/></label></div>
+      <h3>도구와 연결</h3>{content.tools.map((tool,i)=><div className="repeat-row" key={i}><label>종류<select value={tool.kind} onChange={e=>change('tools',content.tools.map((t,n)=>n===i?{...t,kind:e.target.value}:t))}>{['도구','스킬','플러그인','MCP','라이브러리'].map(k=><option key={k}>{k}</option>)}</select></label><label>이름<input value={tool.name} maxLength={200} onChange={e=>change('tools',content.tools.map((t,n)=>n===i?{...t,name:e.target.value}:t))}/></label><label>주소<input type="url" value={tool.url} placeholder="https://" onChange={e=>change('tools',content.tools.map((t,n)=>n===i?{...t,url:e.target.value}:t))}/></label><div className="wide rich-labeled"><span>설치·연결 방법</span><RichField compact label="설치·연결 방법" documentKey={`${initial.id}:tool:${i}`} value={tool.note} onChange={value=>change('tools',draft.latest.current.tools.map((t,n)=>n===i?{...t,note:value}:t))} assetId={initial.id} editable={!saving}/></div><button onClick={()=>change('tools',content.tools.filter((_,n)=>n!==i))}>항목 빼기</button></div>)}<button onClick={()=>change('tools',[...content.tools,{kind:'도구',name:'',url:'',note:''}])}>+ 도구·스킬·연결 추가</button>
+      <h3>용어</h3>{content.terms.map((term,i)=><div className="repeat-row" key={i}><label>용어<input value={term.name} onChange={e=>change('terms',content.terms.map((t,n)=>n===i?{...t,name:e.target.value}:t))}/></label>{(['explanation','example'] as const).map((key,n)=><div className="wide rich-labeled" key={key}><span>{['설명','예시'][n]}</span><RichField compact label={['용어 설명','용어 예시'][n]} documentKey={`${initial.id}:term:${i}:${key}`} value={term[key]} onChange={value=>change('terms',draft.latest.current.terms.map((t,j)=>j===i?{...t,[key]:value}:t))} assetId={initial.id} editable={!saving}/></div>)}<button onClick={()=>change('terms',content.terms.filter((_,n)=>n!==i))}>항목 빼기</button></div>)}<button onClick={()=>change('terms',[...content.terms,{name:'',explanation:'',example:''}])}>+ 용어 추가</button>
+      <h3>참고 링크</h3>{content.references.map((link,i)=><div className="repeat-row" key={i}><label>이름<input value={link.label} onChange={e=>change('references',content.references.map((l,n)=>n===i?{...l,label:e.target.value}:l))}/></label><label>주소<input type="url" value={link.url} placeholder="https://" onChange={e=>change('references',content.references.map((l,n)=>n===i?{...l,url:e.target.value}:l))}/></label><button onClick={()=>change('references',content.references.filter((_,n)=>n!==i))}>항목 빼기</button></div>)}<button onClick={()=>change('references',[...content.references,{label:'',url:''}])}>+ 참고 링크 추가</button>
+      <div className="extra-rich-fields">{([['purpose','목적과 사용 상황'],['inputs','준비물과 입력 자료'],['completion','완료 기준'],['troubleshooting','실패와 해결 방법']] as const).map(([key,label])=><div className="rich-labeled" key={key}><span>{label}</span><RichField compact label={label} documentKey={`${initial.id}:${key}`} value={content[key]} onChange={value=>change(key,value)} assetId={initial.id} editable={!saving}/></div>)}</div><div className="field-grid"><label>사용 환경<input value={content.environment} onChange={e=>change('environment',e.target.value)} maxLength={2000}/></label><label>사용 확인 상태<select value={content.status} onChange={e=>change('status',e.target.value)}><option value="UNVERIFIED">미검증</option><option value="VERIFIED">사용 확인</option><option value="NEEDS_UPDATE">수정 필요</option></select></label><label>마지막 확인일<input type="date" value={content.verifiedOn} onChange={e=>change('verifiedOn',e.target.value)}/></label></div>
+      </div></details><Attachments assetId={initial.id} selected={content.fileIds} onBusyChange={setUploading} onAttach={id=>change('fileIds',[...new Set([...draft.latest.current.fileIds,id])])}/>
+      <label className="version-note">이번에 바뀐 내용 <small>선택</small><input value={changeNote} onChange={e=>setChangeNote(e.target.value)} maxLength={500}/></label>
+    </fieldset><div className="editor-actions"><span role="status" className={draft.status==='error'?'error':'muted'}>{statusText}</span><a href={'#/assets/'+initial.id}>읽기 화면</a><button className="primary" disabled={saving||attachmentsBusy} onClick={()=>void save()}>{attachmentsBusy?'첨부 업로드 중…':saving?'저장 중…':'버전으로 저장'}</button></div></div></div>
+  </div>;
+}

@@ -1,0 +1,13 @@
+.env
+.env.*
+!.env.example
+.secrets/
+**/node_modules/
+**/dist/
+**/build/
+**/.gradle/
+.idea/
+.DS_Store
+work/
+*.log
+coverage/

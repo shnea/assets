@@ -1,0 +1,35 @@
+name: assets-test
+services:
+  db:
+    image: postgres:17.11-alpine
+    environment:
+      POSTGRES_DB: assets_test
+      POSTGRES_USER: assets
+      POSTGRES_PASSWORD: assets-test-only
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -U assets -d assets_test]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+  test:
+    build:
+      context: ./api
+      target: development
+    environment:
+      DATABASE_URL: jdbc:postgresql://db:5432/assets_test
+      POSTGRES_PASSWORD: assets-test-only
+      PLATFORM_OIDC_ISSUER: https://identity.example/realm/assets
+      PLATFORM_OIDC_REDIRECT_URI: http://localhost:30170/callback
+      ADMIN_OIDC_ISSUER: https://identity.example/realm/assets
+      ADMIN_OIDC_SUBJECT: admin
+    volumes:
+      - gradle-test-cache:/cache/gradle
+      - ./api/build/test-results:/workspace/build/test-results
+      - ./api/build/reports:/workspace/build/reports
+    depends_on:
+      db:
+        condition: service_healthy
+volumes:
+  gradle-test-cache:

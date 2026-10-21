@@ -1,0 +1,50 @@
+[
+  {
+    "name": "M01 · 내 자산",
+    "path": "E:\\app\\myAssets\\design\\m01-screen.svg",
+    "width": 390,
+    "height": 844
+  },
+  {
+    "name": "M02 · 자산 작성",
+    "path": "E:\\app\\myAssets\\design\\m02-screen.svg",
+    "width": 390,
+    "height": 844
+  },
+  {
+    "name": "M03 · 자산 읽기·버전",
+    "path": "E:\\app\\myAssets\\design\\m03-screen.svg",
+    "width": 390,
+    "height": 844
+  },
+  {
+    "name": "M04 · 아이디어 수첩 목록",
+    "path": "E:\\app\\myAssets\\design\\m04-screen.svg",
+    "width": 390,
+    "height": 844
+  },
+  {
+    "name": "M05 · 아이디어 편집",
+    "path": "E:\\app\\myAssets\\design\\m05-screen.svg",
+    "width": 390,
+    "height": 844
+  },
+  {
+    "name": "M06 · 에이전트 연결",
+    "path": "E:\\app\\myAssets\\design\\m06-screen.svg",
+    "width": 390,
+    "height": 844
+  },
+  {
+    "name": "M07 · 운영 통계",
+    "path": "E:\\app\\myAssets\\design\\m07-screen.svg",
+    "width": 390,
+    "height": 844
+  },
+  {
+    "name": "M08 · 저장 공간 관리",
+    "path": "E:\\app\\myAssets\\design\\m08-screen.svg",
+    "width": 390,
+    "height": 844
+  }
+]

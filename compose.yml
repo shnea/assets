@@ -1,0 +1,52 @@
+name: assets-dev
+services:
+  db:
+    image: postgres:17.11-alpine
+    environment:
+      POSTGRES_DB: assets
+      POSTGRES_USER: assets
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-assets-local-development}
+    volumes:
+      - assets-db:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -U assets -d assets]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+  api:
+    image: registry.shnea.kr/assets-api:${IMAGE_TAG:-dev}
+    build: ./api
+    env_file: .env
+    environment:
+      DATABASE_URL: jdbc:postgresql://db:5432/assets
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-assets-local-development}
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, wget, -q, --spider, http://127.0.0.1:8080/api/health]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+    restart: unless-stopped
+  web:
+    image: registry.shnea.kr/assets-web:${IMAGE_TAG:-dev}
+    build: ./web
+    restart: unless-stopped
+  nginx:
+    image: registry.shnea.kr/assets-nginx:${IMAGE_TAG:-dev}
+    build: ./infra/nginx
+    environment:
+      PLATFORM_IMAGE_ORIGIN: ${PLATFORM_URL:-https://platform.shnea.kr}
+    ports:
+      - 127.0.0.1:${PORT:-30170}:8080
+    depends_on:
+      api:
+        condition: service_healthy
+      web:
+        condition: service_started
+    restart: unless-stopped
+volumes:
+  assets-db:

@@ -1,0 +1,56 @@
+name: assets-prod
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: "3"
+services:
+  db:
+    image: postgres:17.11-alpine
+    environment:
+      POSTGRES_DB: assets
+      POSTGRES_USER: assets
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+    volumes:
+      - ${ASSETS_DB_PATH:-/volume2/homes/myassets}:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -U assets -d assets]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+    logging: *logging
+  api:
+    image: registry.shnea.kr/assets-api:${ASSETS_IMAGE_TAG:?Set ASSETS_IMAGE_TAG}
+    env_file: .env
+    environment:
+      DATABASE_URL: jdbc:postgresql://db:5432/assets
+      COOKIE_SECURE: "true"
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, wget, -q, --spider, http://127.0.0.1:8080/api/health]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 15s
+    restart: unless-stopped
+    logging: *logging
+  web:
+    image: registry.shnea.kr/assets-web:${ASSETS_IMAGE_TAG:?Set ASSETS_IMAGE_TAG}
+    restart: unless-stopped
+    logging: *logging
+  nginx:
+    image: registry.shnea.kr/assets-nginx:${ASSETS_IMAGE_TAG:?Set ASSETS_IMAGE_TAG}
+    environment:
+      PLATFORM_IMAGE_ORIGIN: ${PLATFORM_URL:-https://platform.shnea.kr}
+    ports:
+      - ${ASSETS_BIND_ADDRESS:?Set NAS LAN address}:${PORT:-30170}:8080
+    depends_on:
+      api:
+        condition: service_healthy
+      web:
+        condition: service_started
+    restart: unless-stopped
+    logging: *logging

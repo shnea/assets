@@ -1,0 +1,7 @@
+{
+  "name": "assets-contract-verification",
+  "private": true,
+  "type": "module",
+  "scripts": { "test": "node smoke.mjs" },
+  "dependencies": { "@modelcontextprotocol/sdk": "1.32.1" }
+}
