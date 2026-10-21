@@ -6,9 +6,10 @@ import {randomUUID} from 'node:crypto';
 import {Member,base} from './smoke.mjs';
 
 const launcher=process.argv[2];
+const canWrite=process.argv.includes('--write');
 if(!launcher)throw new Error('Pass the absolute path to the installed @openai/codex/bin/codex.js.');
 const member=await new Member().login('alice');
-const connection=await member.api('/api/connections','POST',{name:'Codex 클라이언트 검증',days:1});
+const connection=await member.api('/api/connections','POST',{name:'Codex 클라이언트 검증',days:1,canWrite});
 assert.equal(connection.status,200);
 const serverName='assets_contract_'+randomUUID().replaceAll('-','');
 const child=spawn(process.execPath,[launcher,'app-server','--listen','stdio://',
@@ -35,9 +36,11 @@ try{
   const status=await rpc('mcpServerStatus/list',{serverName,limit:10});
   const server=status.data.find(item=>item.name===serverName);assert.ok(server);assert.equal(server.toolsError,null);
   const names=Object.values(server.tools).map(tool=>tool.name).sort();
-  assert.deepEqual(names,['get_references','list_versions','read_asset','read_version','search_assets']);
+  const expected=['get_references','list_versions','read_asset','read_version','search_assets'];
+  if(canWrite)expected.push('create_asset','add_asset_version');
+  assert.deepEqual(names,expected.sort());
   assert.equal(server.serverInfo?.name,'shnea-assets');
-  console.log('PASS: installed Codex MCP client initialized Assets and discovered all five read-only tools; no model turn or persistent configuration change');
+  console.log(`PASS: installed Codex MCP client initialized Assets and discovered ${expected.length} scoped tools; no model turn or persistent configuration change`);
 }finally{
   await member.api('/api/connections/'+connection.data.id,'DELETE');
   child.stdin.end();lines.close();child.kill();

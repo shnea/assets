@@ -40,6 +40,8 @@ class LibraryIntegrationTest {
     @Autowired JdbcTemplate db;
     @Autowired Storage storage;
     @Autowired Transfers transfers;
+    @Autowired McpWrites mcpWrites;
+    @Autowired Connections connections;
     @MockitoBean Platform platform;
     MockMvc mvc;
     JsonMapper json=new JsonMapper();
@@ -194,6 +196,92 @@ class LibraryIntegrationTest {
         mvc.perform(delete("/api/connections/"+content(tokenResponse,"id")).with(as("alice")).with(csrf())).andExpect(status().isOk());
         mvc.perform(post("/mcp").header("Authorization",bearer).contentType("application/json").content(rpc)).andExpect(status().isUnauthorized());
         assertThat(db.queryForList("SELECT token_hash FROM mcp_connections").toString()).doesNotContain(token);
+    }
+    String connection(String subject,boolean write) throws Exception {
+        return mvc.perform(post("/api/connections").with(as(subject)).with(csrf()).contentType("application/json").content(json.writeValueAsString(Map.of("name","검증 연결","canWrite",write))))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.canWrite").value(write)).andReturn().getResponse().getContentAsString();
+    }
+    tools.jackson.databind.JsonNode mcp(String token,String name,Object arguments) throws Exception {
+        var request=Map.of("jsonrpc","2.0","id",1,"method","tools/call","params",Map.of("name",name,"arguments",arguments));
+        return json.readTree(mvc.perform(post("/mcp").header("Authorization","Bearer "+token).contentType("application/json").content(json.writeValueAsString(request)))
+            .andExpect(status().isOk()).andReturn().getResponse().getContentAsString()).path("result");
+    }
+    @Test void mcpCreatesSkillsAndAppendsVersionsWithScopedKeysAndSafeRetries() throws Exception {
+        String reader=content(connection("alice",false),"token");
+        String writerResponse=connection("alice",true),writer=content(writerResponse,"token");
+        var input=Map.of("requestId",UUID.randomUUID(),"content",Map.of("title","내 제작 스킬","work","화면 요구사항 정리","remember","# SKILL.md\n사용할 때 지켜야 하는 순서","start","스킬을 호출한다.","tools",List.of(Map.of("kind","스킬","name","제작 스킬","note","로컬 SKILL.md에서 선택한 내용"))));
+        assertThat(mcp(reader,"create_asset",input).path("isError").asBoolean()).isTrue();
+        String list="{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}";
+        for(var key:List.of(Map.entry(reader,5),Map.entry(writer,7))) mvc.perform(post("/mcp").header("Authorization","Bearer "+key.getKey()).contentType("application/json").content(list)).andExpect(jsonPath("$.result.tools.length()").value(key.getValue()));
+        var created=mcp(writer,"create_asset",input);assertThat(created.path("isError").asBoolean()).isFalse();
+        var saved=created.path("structuredContent");UUID id=UUID.fromString(saved.path("assetId").asText());
+        assertThat(saved.path("version").asInt()).isEqualTo(1);assertThat(saved.path("replayed").asBoolean()).isFalse();
+        var retry=mcp(writer,"create_asset",input).path("structuredContent");assertThat(retry.path("assetId").asText()).isEqualTo(id.toString());assertThat(retry.path("replayed").asBoolean()).isTrue();
+        var reused=new LinkedHashMap<String,Object>(input);reused.put("changeNote","다른 요청");assertThat(mcp(writer,"create_asset",reused).path("isError").asBoolean()).isTrue();
+        var append=Map.of("requestId",UUID.randomUUID(),"assetId",id,"expectedVersion",1,"changes",Map.of("remember","새 도구에 맞춘 스킬 본문"),"changeNote","도구 변경");
+        assertThat(mcp(reader,"add_asset_version",append).path("isError").asBoolean()).isTrue();
+        var added=mcp(writer,"add_asset_version",append);assertThat(added.path("isError").asBoolean()).isFalse();assertThat(added.path("structuredContent").path("version").asInt()).isEqualTo(2);
+        assertThat(mcp(writer,"add_asset_version",append).path("structuredContent").path("replayed").asBoolean()).isTrue();
+        var old=mcp(reader,"read_version",Map.of("assetId",id,"number",1));assertThat(old.toString()).contains("SKILL.md").doesNotContain("새 도구에 맞춘");
+        var latest=mcp(reader,"read_asset",Map.of("assetId",id));assertThat(latest.toString()).contains("새 도구에 맞춘 스킬 본문","화면 요구사항 정리","제작 스킬");
+        var stale=new LinkedHashMap<String,Object>(append);stale.put("requestId",UUID.randomUUID());assertThat(mcp(writer,"add_asset_version",stale).path("isError").asBoolean()).isTrue();
+        for(String other:List.of("bob","admin")) {
+            assertThat(mcp(content(connection(other,true),"token"),"add_asset_version",Map.of("requestId",UUID.randomUUID(),"assetId",id,"expectedVersion",2,"changes",Map.of("work","타인 변경"))).path("isError").asBoolean()).isTrue();
+            mvc.perform(get("/api/assets/"+id).with(as(other))).andExpect(status().isNotFound());
+        }
+        mvc.perform(get("/api/assets/"+id).with(as("alice"))).andExpect(jsonPath("$.version").value(2)).andExpect(jsonPath("$.draft.status").value("UNVERIFIED"));
+        assertThat(db.queryForObject("SELECT count(*) FROM assets",Integer.class)).isEqualTo(1);
+        assertThat(db.queryForObject("SELECT count(*) FROM asset_versions",Integer.class)).isEqualTo(2);
+        assertThat(db.queryForObject("SELECT count(*) FROM usage_events WHERE kind='ASSET_CREATE'",Integer.class)).isEqualTo(1);
+        assertThat(mcp(writer,"delete_asset",Map.of("assetId",id)).path("isError").asBoolean()).isTrue();
+        mvc.perform(delete("/api/connections/"+content(writerResponse,"id")).with(as("alice")).with(csrf()));
+        mvc.perform(post("/mcp").header("Authorization","Bearer "+writer).contentType("application/json").content(list)).andExpect(status().isUnauthorized());
+    }
+    @Test void mcpWritesAreAtomicPreserveAttachmentsAndRejectPendingWebDrafts() throws Exception {
+        String writer=content(connection("alice",true),"token");
+        var initial=mcp(writer,"create_asset",Map.of("requestId",UUID.randomUUID(),"content",Map.of("work","처음"))).path("structuredContent");
+        String id=initial.path("assetId").asText();UUID owner=db.queryForObject("SELECT id FROM members WHERE subject='alice'",UUID.class);
+        UUID file=UUID.randomUUID(),remote=UUID.randomUUID();
+        db.update("INSERT INTO files(id,owner_id,asset_id,name,size_bytes,sha256,state,platform_file_id) VALUES (?,?,?,'보존할 파일',1,?,'READY',?)",file,owner,UUID.fromString(id),"0".repeat(64),remote);
+        var document=rich("첨부와 서식 보존",remote.toString(),"asset:"+id);
+        mvc.perform(put("/api/assets/"+id).with(as("alice")).with(csrf()).contentType("application/json").content(json.writeValueAsString(Map.of("revision",2,"content",Map.of("work",document,"fileIds",List.of(file)))))).andExpect(status().isOk());
+        var append=Map.of("requestId",UUID.randomUUID(),"assetId",id,"expectedVersion",1,"changes",Map.of("start","새 버전"));
+        assertThat(mcp(writer,"add_asset_version",append).path("isError").asBoolean()).isTrue();
+        mvc.perform(post("/api/assets/"+id+"/versions").with(as("alice")).with(csrf()).contentType("application/json").content("{\"revision\":3}")).andExpect(status().isOk());
+        var valid=new LinkedHashMap<String,Object>(append);valid.put("expectedVersion",2);
+        assertThat(mcp(writer,"add_asset_version",valid).path("structuredContent").path("version").asInt()).isEqualTo(3);
+        assertThat(storage.references(owner,UUID.fromString(id),2)).hasSize(1);assertThat(storage.references(owner,UUID.fromString(id),3)).hasSize(1);
+        var current=mcp(writer,"read_asset",Map.of("assetId",id));assertThat(current.toString()).contains(remote.toString(),file.toString(),"shnea-editor","bold");
+        int assets=db.queryForObject("SELECT count(*) FROM assets",Integer.class),versions=db.queryForObject("SELECT count(*) FROM asset_versions",Integer.class);
+        for(var invalid:List.of(Map.of("title","내용 없는 자산"),Map.of("work","잘못된 첨부","fileIds",List.of(file)),Map.of("work","잘못된 소유자","ownerId",owner),Map.of("work","잘못된 링크","references",List.of(Map.of("url","file:///local/SKILL.md")))))
+            assertThat(mcp(writer,"create_asset",Map.of("requestId",UUID.randomUUID(),"content",invalid)).path("isError").asBoolean()).isTrue();
+        for(var changes:List.of(Map.of("work","","start",""),Map.of("fileIds",List.of(UUID.randomUUID())),Map.of("work",rich("잘못된 인라인",UUID.randomUUID().toString(),"asset:"+id))))
+            assertThat(mcp(writer,"add_asset_version",Map.of("requestId",UUID.randomUUID(),"assetId",id,"expectedVersion",3,"changes",changes)).path("isError").asBoolean()).isTrue();
+        assertThat(db.queryForObject("SELECT count(*) FROM assets",Integer.class)).isEqualTo(assets);assertThat(db.queryForObject("SELECT count(*) FROM asset_versions",Integer.class)).isEqualTo(versions);
+        mvc.perform(get("/api/assets/"+id).with(as("alice"))).andExpect(jsonPath("$.revision").value(6));
+    }
+    @Test void concurrentMcpRetriesCreateOnceAndVersionRacesDoNotOverwrite() throws Exception {
+        var access=connections.authorize("Bearer "+content(connection("alice",true),"token"));
+        var input=json.valueToTree(Map.of("requestId",UUID.randomUUID(),"content",Map.of("work","동시 등록")));
+        var gate=new java.util.concurrent.CountDownLatch(1);
+        UUID id;
+        try(var pool=java.util.concurrent.Executors.newFixedThreadPool(2)) {
+            var tasks=new ArrayList<java.util.concurrent.Future<McpWrites.Result>>();
+            for(int i=0;i<2;i++) tasks.add(pool.submit(()->{gate.await();return mcpWrites.write(access,"create_asset",input);}));
+            gate.countDown();var first=tasks.get(0).get(10,java.util.concurrent.TimeUnit.SECONDS);var second=tasks.get(1).get(10,java.util.concurrent.TimeUnit.SECONDS);
+            assertThat(first.assetId()).isEqualTo(second.assetId());assertThat(first.replayed()).isNotEqualTo(second.replayed());id=first.assetId();
+        }
+        var nextGate=new java.util.concurrent.CountDownLatch(1);
+        try(var pool=java.util.concurrent.Executors.newFixedThreadPool(2)) {
+            var tasks=new ArrayList<java.util.concurrent.Future<Object>>();
+            for(int i=0;i<2;i++) {
+                var next=json.valueToTree(Map.of("requestId",UUID.randomUUID(),"assetId",id,"expectedVersion",1,"changes",Map.of("work","동시 버전 "+i)));
+                tasks.add(pool.submit(()->{nextGate.await();try{return mcpWrites.write(access,"add_asset_version",next);}catch(Failure error){return error.code;}}));
+            }
+            nextGate.countDown();var results=List.of(tasks.get(0).get(10,java.util.concurrent.TimeUnit.SECONDS),tasks.get(1).get(10,java.util.concurrent.TimeUnit.SECONDS));
+            assertThat(results.stream().filter(McpWrites.Result.class::isInstance).count()).isEqualTo(1);assertThat(results).contains("VERSION_CHANGED");
+        }
+        assertThat(db.queryForObject("SELECT count(*) FROM assets",Integer.class)).isEqualTo(1);assertThat(db.queryForObject("SELECT count(*) FROM asset_versions",Integer.class)).isEqualTo(2);
     }
     Map<String,Object> rich(String text,String remoteId,String scope) {
         var children=new ArrayList<Object>();

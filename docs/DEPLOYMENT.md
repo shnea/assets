@@ -27,6 +27,8 @@
 
 개발 PC의 `compose.prod.yml`을 `/volume1/docker/prod/myassets/compose.yml`로, 비밀값을 채운 `.env.prod`를 같은 폴더의 `.env`로 복사한다. DB 경로는 `ASSETS_DB_PATH=/volume2/homes/myassets`다. `.env.prod`는 실제 값이 들어갈 로컬 파일로 Git에서 제외한다. 비밀값 없는 형식은 `deploy/.env.example`을 참고한다.
 
-개발 PC에서 검증 후 `./scripts/publish.ps1 -Tag 0.1.0-r1`으로 세 이미지를 빌드·푸시한다. 운영의 `.env`에서 `ASSETS_IMAGE_TAG`를 같은 태그로 맞춘 뒤 `/volume1/docker/prod/myassets`에서 `docker compose pull`과 `docker compose up -d`로 실행한다. 운영용 플랫폼 환경·키와 DB 비밀번호는 운영 파일에 입력해야 한다. 이 이미지의 대상은 Linux amd64다.
+개발 PC에서 검증 후 `./scripts/publish.ps1 -Tag 0.1.1`으로 세 이미지를 빌드·푸시한다. 운영의 `.env`에서 `ASSETS_IMAGE_TAG`를 같은 태그로 맞춘 뒤 `/volume1/docker/prod/myassets`에서 `docker compose pull`과 `docker compose up -d`로 실행한다. 운영용 플랫폼 환경·키와 DB 비밀번호는 운영 파일에 입력해야 한다. 이 이미지의 대상은 Linux amd64다.
+
+이미 운영 중이면 `.env`의 이미지 태그만 바꾸며 기존 운영 자격증명과 DB 경로를 유지한다. `0.1.1`은 MCP 등록·버전 추가 권한과 중복 요청 기록을 추가하는 DB 마이그레이션을 API 시작 시 적용한다. 기존 연결 키는 읽기 전용으로 유지되므로 등록 기능을 쓰려면 웹의 에이전트 연결에서 권한을 선택해 새 키를 만든 뒤 클라이언트에 교체한다.
 
 운영 Compose에는 소스 경로나 빌드 명령이 없다. 웹·API·Nginx 설정은 레지스트리 이미지에 포함한다. 첨부 원본은 플랫폼에만 저장하고 Assets의 영속 마운트는 PostgreSQL 데이터 하나로 구성한다.
